@@ -1,0 +1,6 @@
+interface:
+  display_name: "omh 鸿蒙应用开发与真机验证"
+  short_description: "鸿蒙应用编译部署、启动测试、日志回收、截屏与 UI 组件树检查"
+  default_prompt: "使用 $omh-harmonyos-app-dev 完成当前鸿蒙应用的开发和所需真机验证，复用项目环境并保存分阶段证据。"
+policy:
+  allow_implicit_invocation: true

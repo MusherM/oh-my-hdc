@@ -1,0 +1,12 @@
+features = { hooks = true }
+
+[hooks]
+
+[[hooks.PreToolUse]]
+matcher = "^Bash$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "'/Users/lixinyang/.cargo/bin/omh' hook"
+timeout = 5
+statusMessage = "omh: checking shared-device access"

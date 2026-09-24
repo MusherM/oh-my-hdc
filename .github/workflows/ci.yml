@@ -1,0 +1,69 @@
+name: Test and package
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test native process lifecycle and scheduler
+        run: cargo test --locked -- --test-threads=1
+      - name: Build release
+        run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Package with SHA-256
+        shell: pwsh
+        run: |
+          $target = '${{ matrix.target }}'
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
+          $name = "omh-$version-$target"
+          New-Item -ItemType Directory -Force "dist/$name" | Out-Null
+          $exe = if ($IsWindows) { 'omh.exe' } else { 'omh' }
+          Copy-Item "target/$target/release/$exe" "dist/$name/"
+          Copy-Item README.md,README_zh.md,LICENSE "dist/$name/"
+          Copy-Item -Recurse skills "dist/$name/skills"
+          Push-Location dist
+          if ($IsWindows) {
+            Compress-Archive -Path $name -DestinationPath "$name.zip"
+            $archive = "$name.zip"
+          } else {
+            tar -czf "$name.tar.gz" $name
+            if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+            $archive = "$name.tar.gz"
+          }
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower()
+          "$hash  $archive" | Set-Content -Encoding ascii "$archive.sha256"
+          Pop-Location
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omh-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error

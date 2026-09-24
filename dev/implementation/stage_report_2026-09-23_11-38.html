@@ -1,0 +1,28 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>omh 实现与验证报告 · 2026-09-23 11:38 北京时间</title>
+<style>body{max-width:1020px;margin:48px auto;padding:0 24px;font:16px/1.75 system-ui,sans-serif;color:#22313a;background:#f7f8f8}h1{font-size:30px;line-height:1.3}h2{font-size:21px;margin-top:32px}small,.muted{color:#66747b}table{border-collapse:collapse;width:100%;background:white}td,th{text-align:left;padding:12px 15px;border-bottom:1px solid #dde3e6;vertical-align:top}th{background:#e9eff1}code{font:13px/1.6 ui-monospace,monospace;overflow-wrap:anywhere}.box{padding:18px 22px;border-left:4px solid #257b68;background:#eaf4f0}.pending{color:#915c0d}a{color:#175b9a}li{margin:7px 0}</style>
+<h1>omh 实现与验证报告 · 2026-09-23 11:38 北京时间</h1><p class="muted">版本 0.1.0 · 提交：无（初始目录不是 Git 仓库，本次未创建提交）<br>源代码与锁文件快照 SHA-256：<code>cdc79233cb0be1e6d202a782b22587b6f7b0494d48690c965c5084b9757cb080</code></p>
+<div class="box"><strong>已完成本机首轮验收。</strong>Rust CLI、单用户后台调度器、项目级 Codex skill/hook、双语说明与四目标 CI 已实现。18 项自动化测试通过，macOS ARM64 release 包已构建并解包运行；真实手机只读申请—执行—释放通过。<strong>这不代表全部平台或完整应用业务验收完成。</strong></div>
+<h2>实际实现</h2><ul><li>设备独占、可满足请求 FIFO、指定或任意设备申请、独立凭证、普通会话空闲 10 分钟回收。</li><li>后台日志不续期；托管长测试由脚本完成信号与显式超时控制，不依赖 agent 心跳，结束后自动清理与释放。</li><li>进程监督、调度器断开时取消进程树、崩溃恢复隔离、旧凭证拒绝、清理失败阻止交接。</li><li>清理声明应用与会话转发；hdc 服务维护先排空会话，并发请求合并，失败暂停分配。</li><li>Codex 项目配置合并与备份；常见直接 hdc 调用拦截；doctor 不把配置存在当作运行时保护。</li></ul>
+<h2>验证范围</h2><table><thead><tr><th>项目</th><th>结果</th><th>证据与范围</th></tr></thead><tbody>
+<tr><td>自动化测试</td><td>通过，18 项</td><td>4 个单元测试 + 14 个集成测试；模拟 hdc、多进程真实 CLI。<code>/tmp/omh-tests-handoff-fix.log</code></td></tr>
+<tr><td>格式与静态检查</td><td>通过</td><td>cargo fmt / clippy --all-targets -D warnings。<code>/tmp/omh-clippy-handoff-fix.log</code></td></tr>
+<tr><td>本机 release 构建</td><td>通过</td><td>Rust 1.98.1，Mach-O ARM64。<code>/tmp/omh-release-handoff-fix.log</code></td></tr>
+<tr><td>skill 格式</td><td>通过</td><td>skill-creator quick_validate 返回 Skill is valid；不等同于 agent 行为测试。</td></tr>
+<tr><td>真实 SDK 发现设备</td><td>通过</td><td>检测到 1 台手机。<code>/tmp/omh-sdk-check-ouepeui5</code></td></tr>
+<tr><td>真实手机只读冒烟</td><td>通过</td><td>使用唯一、未安装的验证包名申请；shell echo 返回 OMH_READ_ONLY_PROBE；release 退出 0；最终设备 free。未操作真实应用。<code>/tmp/omh-device-verified-jlwfxgl6/summary.json</code></td></tr>
+<tr><td>应用安装、启动、业务与一小时耐久</td><td class="pending">未验证</td><td>没有测试用 HAP。长任务只做时间压缩策略测试，没有声称完成真机一小时运行。</td></tr>
+<tr><td>Codex 会话中的 hook</td><td class="pending">待实际信任与验证</td><td>已测试 hook 输入输出、项目配置幂等与不覆盖既有配置；未在当前 Codex 会话安装/信任 hook，不能宣称执行路径已受保护。</td></tr>
+</tbody></table>
+<h2>平台交付矩阵</h2><table><tr><th>目标</th><th>构建 / 运行</th><th>产物</th></tr>
+<tr><td>macOS ARM64</td><td>本机验证通过</td><td>已生成 tar.gz + SHA-256，解包后执行 --version 验证通过。</td></tr>
+<tr><td>macOS Intel x64</td><td class="pending">未在对应系统运行</td><td>已配置原生 CI；本机未生成该平台包。</td></tr>
+<tr><td>Linux x64</td><td class="pending">未在对应系统运行</td><td>已配置原生 CI；本机未生成该平台包。</td></tr>
+<tr><td>Windows x64</td><td class="pending">未在对应系统运行</td><td>已配置原生 CI；Windows Job Object 与路径处理需对应 runner 验证。本机未生成该平台包。</td></tr></table>
+<p>工作流 YAML 已解析并确认四个唯一目标。当前目录无 Git 远端，因此未触发远端 CI。runner 标签依据 <a href="https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job">GitHub 官方 runner 文档</a>核对。所有包均未做签名或公证。</p>
+<h2>发布包</h2><p><code>/Users/lixinyang/project/oh-my-hdc/dist/omh-0.1.0-aarch64-apple-darwin.tar.gz</code><br>大小：1,308,117 bytes<br>SHA-256：<code>22a0e2fdbd876480fd98279e9672f9022521c25f4921364f648d5ed17643f063</code></p>
+<h2>本轮发现并修复</h2><ul><li>真实设备对未安装应用返回 10104002。仅在同时明确说明应用未安装时接受“无需停止”，其他错误仍隔离设备。首次失败记录为当时结果：<code>/tmp/omh-device-smoke-sk22_lv9</code>。</li><li>命令结果先于周期调度处理，可能误拒绝紧接着的命令；现在在接收新操作前同步处理完成结果，并增加连续命令回归测试。</li><li>旧任务取消不得影响设备的新占用者；并行清理不能把另一台设备的活动清理操作当成崩溃遗留。</li><li>端口转发按完整规则删除；已有转发不接管，删除后再次确认不存在。</li></ul>
+<h2>运行边界</h2><ul><li>同一 OS 用户、同一状态目录共享调度；不同状态目录的池、IDE、人工终端和未接入项目不受协调。</li><li>hook 是防误用机制，不是安全沙箱。不解释任意脚本，也不能防同权限 agent 刻意绕过。<a href="https://learn.chatgpt.com/docs/hooks">Codex 官方 hook 边界</a>。</li><li>普通执行支持管道输入输出，不支持裸交互终端；托管脚本必须自行确认业务成功，不得主动脱离进程组。</li><li>监督进程异常且无法确认进程树停止时保持隔离。Unix 可在确认持久化进程组已不存在后恢复；缺少可信进程标识等情况不强制清除状态。</li><li>状态目录含凭证与测试输出，需保持私有；证据与历史不自动删除。测试专用临时调度器已停止。</li></ul>
+<h2>复现入口</h2><pre><code>cargo fmt --all --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked -- --test-threads=1
+cargo build --locked --release</code></pre><p>源资产为仓库源码、Cargo.lock、tests/fake_hdc.rs 与 skills/omh/SKILL.md。无需未发布模型或本机私有中间产物；真机验证另需 SDK、已授权设备及业务测试 HAP。安装与各平台命令见 README.md / README_zh.md。</p></html>
