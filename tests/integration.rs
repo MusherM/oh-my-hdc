@@ -383,6 +383,9 @@ fn cancelling_job_stops_descendants_before_reassignment() {
 #[test]
 fn simultaneous_processes_cannot_double_allocate() {
     let e = Env::new(10000, "A\n");
+    // Discovery publishes the device before its hardware inspection finishes.
+    // Start the contention window only once the device can actually be leased.
+    wait(|| e.state("A") == "free");
     let mut clients = Vec::new();
     for _ in 0..8 {
         clients.push(
@@ -393,16 +396,16 @@ fn simultaneous_processes_cannot_double_allocate() {
                 .unwrap(),
         );
     }
-    let winners: Vec<Value> = clients
+    let outputs: Vec<Output> = clients
         .into_iter()
-        .filter_map(|child| {
-            let out = child.wait_with_output().unwrap();
-            out.status
-                .success()
-                .then(|| serde_json::from_slice(&out.stdout).unwrap())
-        })
+        .map(|child| child.wait_with_output().unwrap())
         .collect();
-    assert_eq!(winners.len(), 1);
+    let winners: Vec<Value> = outputs
+        .iter()
+        .filter(|out| out.status.success())
+        .map(|out| serde_json::from_slice(&out.stdout).unwrap())
+        .collect();
+    assert_eq!(winners.len(), 1, "client results: {outputs:?}");
     e.value(&["release", "--lease", winners[0]["lease"].as_str().unwrap()]);
 }
 

@@ -256,7 +256,7 @@ fn bundled_markdown_links_resolve_and_device_examples_use_omh() {
         if !relative.ends_with(".md") {
             continue;
         }
-        let text = String::from_utf8(content).unwrap();
+        let text = String::from_utf8(content).unwrap().replace("\r\n", "\n");
         if relative.ends_with("/SKILL.md") {
             let name = relative.split('/').next().unwrap();
             assert!(
