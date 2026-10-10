@@ -143,7 +143,9 @@ fn wait(mut test: impl FnMut() -> bool) {
 }
 
 fn deveco_fixture(e: &Env, mode: &str) -> PathBuf {
-    let root = e.root.path().join("deveco-cli");
+    // Runtime canonicalizes this entry point; on Windows that adds a verbatim
+    // prefix. Exercise that boundary with spaces in both auth and signing.
+    let root = e.root.path().join("deveco-cli with spaces");
     fs::create_dir_all(root.join("dist")).unwrap();
     fs::write(
         root.join("package.json"),

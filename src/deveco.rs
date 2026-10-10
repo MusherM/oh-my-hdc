@@ -84,8 +84,8 @@ impl Runtime {
     pub fn args(&self, args: Vec<String>) -> Vec<String> {
         let mut result = vec![
             "--require".into(),
-            self.adapter.to_string_lossy().into(),
-            self.cli.to_string_lossy().into(),
+            node_script_path(&self.adapter),
+            node_script_path(&self.cli),
         ];
         result.extend(args);
         result
@@ -114,6 +114,23 @@ impl Runtime {
     }
 }
 
+// Rust canonicalize returns verbatim Windows paths. Node 22's entry-point
+// resolution can fail on those with EISDIR at the drive root. Only normalize
+// script arguments; keep native executable paths intact for CreateProcess.
+fn node_script_path(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{rest}");
+        }
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            return rest.into();
+        }
+    }
+    text.into_owned()
+}
+
 // An intentionally narrow compatibility surface for signature generate 1.2.1.
 pub fn device_command(args: &[String], device: &str) -> Result<Option<Vec<String>>> {
     if args == ["list", "targets"] {
@@ -135,4 +152,23 @@ pub fn device_command(args: &[String], device: &str) -> Result<Option<Vec<String
         "unsupported DevEco signing HDC command"
     );
     Ok(Some(command.to_vec()))
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn node_scripts_preserve_drive_and_unc_roots() {
+        for (input, expected) in [
+            (
+                r"\\?\C:\CLI with spaces\cli.js",
+                r"C:\CLI with spaces\cli.js",
+            ),
+            (r"\\?\UNC\server\share\cli.js", r"\\server\share\cli.js"),
+            (r"C:\CLI with spaces\cli.js", r"C:\CLI with spaces\cli.js"),
+        ] {
+            assert_eq!(node_script_path(std::path::Path::new(input)), expected);
+        }
+    }
 }
