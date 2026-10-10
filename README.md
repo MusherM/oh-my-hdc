@@ -27,8 +27,9 @@ omh setup codex --project /absolute/path/to/project
 ```
 
 Windows uses `omh.exe` and the SDK's `hdc.exe`. Use PowerShell-native paths and
-quoting. macOS/Linux use the same subcommands. No Python, Node or administrator
-privileges are required at runtime. Put the installed binary in a stable location:
+quoting. macOS/Linux use the same subcommands. Basic scheduling needs no Python,
+Node or administrator privileges; optional DevEco signing needs Node.js and the
+official DevEco CLI. Put the installed binary in a stable location:
 the project hook stores its absolute path; rerun setup after relocating it.
 
 Setup installs three complete skill directories from resources embedded in the binary:
@@ -91,6 +92,57 @@ bare interactive `hdc shell` is not supported. Device and server global options
 cannot override the allocated target. `exec` allows install, uninstall, shell,
 file send/recv, bugreport, jpid, and owned fport/rport creation. Use `logs` for
 hilog; global service commands require the maintenance entry point.
+
+## DevEco automatic signing
+
+The adapter supports official `@deveco/deveco-cli` **1.2.1**. Other versions are
+rejected before execution until verified. It reuses the installed CLI, SDK and
+login state without editing third-party files or updating the CLI. This optional
+integration requires Node.js; basic device scheduling does not. Use
+`omh deveco --cli /path/to/dist/cli.js --node /path/to/node ...` for installations
+outside PATH.
+
+The app-development skill attempts this flow when the selected product has no
+signing configuration or its material files are missing; existing materials are
+reused. Authentication does not acquire a device:
+
+```sh
+omh deveco auth status
+omh deveco auth login
+```
+
+A zero status exit does not prove login: inspect `Current user:` / `Not logged in`.
+In Codex, login emits an `omh.deveco.login` event. The agent immediately opens its
+URL in the current chat's browser side panel using `open_in_codex`, keeping the
+login process alive for the user's authentication. Outside Codex, the default
+system browser opens automatically. Override detection with `--browser codex|default`;
+do not select `codex` in a terminal without an in-app browser tool. Opening the
+page is not login success: wait for the official callback.
+
+After login, acquire the target device and sign from the app root:
+
+```sh
+omh acquire --package com.example.app --device DEVICE_ID --wait 30m --json
+omh deveco signature generate --lease TOKEN --product default --timeout 10m
+```
+
+Signing briefly needs the device UDID before the first signed build, an exception
+to building before acquiring a deployment lease. This entry starts a managed job
+and waits for both execution and cleanup. Completion, failure and timeout release
+the lease automatically. Do not nest it inside `omh job`. The printed job ID works
+with `omh job status/cancel`; closing the client does not cancel the managed job.
+Check the materials, build a signed HAP, then acquire a new lease to install it.
+
+Only the leased device is visible to the CLI. UDID/device-type queries use omh;
+other targets, maintenance and unknown commands fail. Device-query errors cannot
+be swallowed into a successful signing result. Omit `--force` by default; use
+`--team-id` when needed. Huawei still manages cloud certificates/profiles, which
+may include other devices already registered with the account. Validate signing,
+material validity and installation separately.
+
+This is not a general DevEco device proxy: `run/ui/log/emulator/serve` are outside
+its scope. The Codex hook denies common direct DevEco device operations; it
+remains a cooperative guardrail, not a system sandbox.
 
 ## Long tests and expiry
 

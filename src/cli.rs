@@ -27,6 +27,22 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Cmd {
+    /// DevEco authentication and lease-scoped automatic signing (CLI 1.2.1).
+    Deveco {
+        #[arg(long)]
+        cli: Option<PathBuf>,
+        #[arg(long)]
+        node: Option<PathBuf>,
+        #[command(subcommand)]
+        command: Deveco,
+    },
+    #[command(name = "__deveco-hdc", hide = true)]
+    DevecoHdc {
+        #[arg(long, env = "OMH_LEASE")]
+        lease: String,
+        #[arg(last = true, required = true)]
+        args: Vec<String>,
+    },
     Devices,
     Status,
     Acquire {
@@ -82,6 +98,34 @@ enum Cmd {
     #[command(name = "__run", hide = true)]
     Run {
         directory: PathBuf,
+    },
+}
+#[derive(Subcommand)]
+enum Deveco {
+    Auth {
+        #[arg(value_parser = ["login", "status"])]
+        action: String,
+        #[arg(long, default_value = "auto", value_parser = ["auto", "codex", "default"])]
+        browser: String,
+    },
+    Signature {
+        #[command(subcommand)]
+        command: Signature,
+    },
+}
+#[derive(Subcommand)]
+enum Signature {
+    Generate {
+        #[arg(long, env = "OMH_LEASE")]
+        lease: String,
+        #[arg(long, default_value = "default")]
+        product: String,
+        #[arg(long)]
+        team_id: Option<String>,
+        #[arg(long)]
+        force: bool,
+        #[arg(long, default_value = "10m", value_parser = duration)]
+        timeout: u64,
     },
 }
 #[derive(Subcommand)]
@@ -164,8 +208,11 @@ fn tail(path: &str, offset: &mut u64, writer: &mut impl Write) -> Result<()> {
     writer.flush()?;
     Ok(())
 }
-fn execute(home: PathBuf, value: Value) -> Result<()> {
+fn execute(home: PathBuf, value: Value, wait_release: bool) -> Result<()> {
     let run = value["run"].as_str().context("missing run id")?.to_owned();
+    if wait_release {
+        eprintln!("omh signing job {run}; inspect/cancel with omh job status/cancel {run}");
+    }
     let input_home = home.clone();
     let input_run = run.clone();
     thread::spawn(move || {
@@ -212,6 +259,19 @@ fn execute(home: PathBuf, value: Value) -> Result<()> {
                 &mut std::io::stderr(),
             )?;
             let result: Outcome = serde_json::from_value(status["result"].clone())?;
+            if wait_release {
+                if status["lease_state"] == "blocked" {
+                    bail!(
+                        "signing process exited {}; cleanup failed: {}",
+                        result.exit_code,
+                        status["cleanup_error"]
+                    );
+                }
+                if status["lease_state"] != "released" {
+                    thread::sleep(Duration::from_millis(100));
+                    continue;
+                }
+            }
             if result.reason != "exited" || !result.tree_stopped {
                 eprintln!(
                     "omh run {run}: {} (tree_stopped={})",
@@ -243,11 +303,78 @@ pub fn main() -> Result<()> {
         .data_local_dir()
         .to_path_buf();
     let home = absolute(cli.home.unwrap_or(default))?;
+    if let Cmd::Deveco {
+        cli,
+        node,
+        command: Deveco::Auth { action, browser },
+    } = &cli.command
+    {
+        let runtime = crate::deveco::Runtime::discover(&home, cli.clone(), node.clone())?;
+        std::process::exit(runtime.auth(action, browser)?);
+    }
     if matches!(cli.command, Cmd::Daemon) {
         return server::serve(home, cli.hdc);
     }
     transport::ensure(&home, cli.hdc.as_deref())?;
     let value = match cli.command {
+        Cmd::Deveco {
+            cli,
+            node,
+            command:
+                Deveco::Signature {
+                    command:
+                        Signature::Generate {
+                            lease,
+                            product,
+                            team_id,
+                            force,
+                            timeout,
+                        },
+                },
+        } => {
+            let runtime = crate::deveco::Runtime::discover(&home, cli, node)?;
+            let mut args = vec![
+                "signature".into(),
+                "generate".into(),
+                "--product".into(),
+                product,
+            ];
+            if let Some(team) = team_id {
+                args.extend(["--team-id".into(), team]);
+            }
+            if force {
+                args.push("--force".into());
+            }
+            return execute(
+                home.clone(),
+                transport::rpc(
+                    &home,
+                    Request::Deveco {
+                        lease,
+                        runtime,
+                        args,
+                        cwd: std::env::current_dir()?,
+                        timeout_ms: timeout,
+                    },
+                )?,
+                true,
+            );
+        }
+        Cmd::DevecoHdc { lease, args } => {
+            let value = transport::rpc(
+                &home,
+                Request::DevecoHdc {
+                    lease,
+                    args,
+                    cwd: std::env::current_dir()?,
+                },
+            )?;
+            if let Some(targets) = value["targets"].as_str() {
+                print!("{targets}");
+                return Ok(());
+            }
+            return execute(home, value, false);
+        }
         Cmd::Devices | Cmd::Status => transport::rpc(&home, Request::Status)?,
         Cmd::Stop => transport::rpc(&home, Request::Stop)?,
         Cmd::Acquire {
@@ -289,6 +416,7 @@ pub fn main() -> Result<()> {
                         cwd: std::env::current_dir()?,
                     },
                 )?,
+                false,
             );
         }
         Cmd::Logs { lease, output } => transport::rpc(

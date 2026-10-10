@@ -142,6 +142,203 @@ fn wait(mut test: impl FnMut() -> bool) {
     }
 }
 
+fn deveco_fixture(e: &Env, mode: &str) -> PathBuf {
+    let root = e.root.path().join("deveco-cli");
+    fs::create_dir_all(root.join("dist")).unwrap();
+    fs::write(
+        root.join("package.json"),
+        r#"{"name":"@deveco/deveco-cli","version":"1.2.1","type":"module"}"#,
+    )
+    .unwrap();
+    fs::write(root.join("dist/cli.js"), include_str!("fake_deveco.js")).unwrap();
+    fs::write(e.root.path().join("mode"), mode).unwrap();
+    root.join("dist/cli.js")
+}
+
+#[test]
+fn deveco_signing_isolates_devices_and_releases_the_job() {
+    let e = Env::new(10000, "A\nB\n");
+    let other = e.acquire("B");
+    let lease = e.acquire("A");
+    let cli = deveco_fixture(&e, "success");
+    let out = e
+        .command(&[
+            "deveco",
+            "--cli",
+            cli.to_str().unwrap(),
+            "signature",
+            "generate",
+            "--lease",
+            &lease,
+        ])
+        .current_dir(e.root.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .contains("Signature generation completed successfully.")
+    );
+    wait(|| e.state("A") == "free");
+    assert_eq!(e.state("B"), "leased");
+    let events = e.events();
+    assert!(events.contains("-t|A|shell|bm|get|-u"));
+    assert!(!events.contains("-t|B|shell|bm|get|-u"));
+    assert!(events.contains("-t|A|shell|getprop|hw_sc.build.os.deviceType"));
+    assert!(
+        !e.output(&["__deveco-hdc", "--lease", &lease, "--", "list", "targets"])
+            .status
+            .success()
+    );
+    e.value(&["release", "--lease", &other]);
+}
+
+#[test]
+fn deveco_swallowed_device_errors_never_report_success() {
+    let e = Env::new(10000, "A\nB\n");
+    for mode in [
+        "wrong-target",
+        "maintenance",
+        "unknown",
+        "shell-hdc",
+        "query-fails",
+        "invalid-udid",
+    ] {
+        let lease = e.acquire("A");
+        let cli = deveco_fixture(&e, mode);
+        if mode == "query-fails" {
+            fs::write(e.root.path().join("query-fails"), "").unwrap();
+        }
+        if mode == "invalid-udid" {
+            fs::remove_file(e.root.path().join("query-fails")).unwrap();
+            fs::write(e.root.path().join("invalid-udid"), "").unwrap();
+        }
+        let out = e
+            .command(&[
+                "deveco",
+                "--cli",
+                cli.to_str().unwrap(),
+                "signature",
+                "generate",
+                "--lease",
+                &lease,
+            ])
+            .current_dir(e.root.path())
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(125),
+            "{mode}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        wait(|| e.state("A") == "free");
+    }
+    let events = e.events();
+    assert!(!events.contains("kill|-r"));
+    assert!(!events.contains("shell|reboot"));
+    assert!(!events.contains("-t|B|shell|bm|get|-u"));
+}
+
+#[test]
+fn deveco_signing_timeout_and_cancel_release_device() {
+    let e = Env::new(10000, "A\n");
+    let cli = deveco_fixture(&e, "timeout");
+    let lease = e.acquire("A");
+    let out = e
+        .command(&[
+            "deveco",
+            "--cli",
+            cli.to_str().unwrap(),
+            "signature",
+            "generate",
+            "--lease",
+            &lease,
+            "--timeout",
+            "1s",
+        ])
+        .current_dir(e.root.path())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(124));
+    wait(|| e.state("A") == "free");
+    fs::remove_file(e.root.path().join("bridge-started")).unwrap();
+    let lease = e.acquire("A");
+    let mut child = e
+        .command(&[
+            "deveco",
+            "--cli",
+            cli.to_str().unwrap(),
+            "signature",
+            "generate",
+            "--lease",
+            &lease,
+        ])
+        .current_dir(e.root.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait(|| e.root.path().join("bridge-started").exists());
+    let state: Value =
+        serde_json::from_slice(&fs::read(e.root.path().join("home/state.json")).unwrap()).unwrap();
+    let run = state["leases"][&lease]["job"].as_str().unwrap();
+    e.value(&["job", "cancel", run]);
+    assert_eq!(child.wait().unwrap().code(), Some(130));
+    wait(|| e.state("A") == "free");
+}
+
+#[test]
+fn deveco_auth_routes_browser_without_acquiring_devices() {
+    let e = Env::new(10000, "A\n");
+    wait(|| e.state("A") == "free");
+    let cli = deveco_fixture(&e, "login");
+    let out = e
+        .command(&[
+            "deveco",
+            "--cli",
+            cli.to_str().unwrap(),
+            "auth",
+            "login",
+            "--browser",
+            "codex",
+        ])
+        .current_dir(e.root.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("omh.deveco.login"));
+    assert!(stdout.contains("LOGIN_CALLBACK_STILL_ALIVE"));
+    assert_eq!(e.state("A"), "free");
+    deveco_fixture(&e, "auth-hdc");
+    let out = e
+        .command(&["deveco", "--cli", cli.to_str().unwrap(), "auth", "status"])
+        .current_dir(e.root.path())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(125));
+
+    let out = Command::new("node")
+        .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/deveco_browser.cjs"))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("BROWSER_ROUTING_OK"));
+}
+
 #[test]
 fn devices_include_read_only_hardware_and_os_info() {
     let e = Env::new(10000, "A\n");

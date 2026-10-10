@@ -154,11 +154,12 @@ impl Backend {
         cwd: PathBuf,
         timeout: u64,
         output: Option<PathBuf>,
+        extra_env: BTreeMap<String, String>,
     ) -> Result<Value> {
         let run_id = id();
         let dir = self.home.join("runs").join(&run_id);
         private_dir(&dir)?;
-        let mut env = BTreeMap::new();
+        let mut env = extra_env;
         env.insert("OMH_HOME".into(), self.home.to_string_lossy().into());
         env.insert("OMH_LEASE".into(), lease.token.clone());
         env.insert("OMH_DEVICE".into(), lease.device.clone());
@@ -166,7 +167,9 @@ impl Backend {
         env.insert("OMH_BIN".into(), binary.to_string_lossy().into());
         let mut path = vec![binary.parent().unwrap().to_path_buf()];
         path.extend(std::env::split_paths(
-            &std::env::var_os("PATH").unwrap_or_default(),
+            &env.get("PATH")
+                .map(std::ffi::OsString::from)
+                .unwrap_or_else(|| std::env::var_os("PATH").unwrap_or_default()),
         ));
         env.insert(
             "PATH".into(),
@@ -372,7 +375,87 @@ fn handle(shared: &Shared, request: Request) -> Result<Value> {
             let mut command = vec!["-t".into(), lease.device.clone()];
             command.extend(args);
             let hdc = b.hdc.clone();
-            b.start(lease, "exec", hdc, command, cwd, idle_ms(), None)?
+            b.start(
+                lease,
+                "exec",
+                hdc,
+                command,
+                cwd,
+                idle_ms(),
+                None,
+                BTreeMap::new(),
+            )?
+        }
+        Request::Deveco {
+            lease,
+            runtime,
+            args,
+            cwd,
+            timeout_ms,
+        } => {
+            let lease = b.lease(&lease)?;
+            ensure!(
+                b.state.maintenance.is_none(),
+                "maintenance pending; no new signing jobs"
+            );
+            ensure!(
+                lease.job.is_none(),
+                "signing requires a lease without an existing job"
+            );
+            ensure!(
+                !b.state
+                    .runs
+                    .values()
+                    .any(|r| r.lease == lease.token && r.kind == "exec" && !r.handled),
+                "wait for the foreground command before signing"
+            );
+            ensure!(
+                args.starts_with(&["signature".into(), "generate".into()]) && timeout_ms > 0,
+                "invalid signing request"
+            );
+            let command = runtime.args(args);
+            b.start(
+                lease,
+                "job",
+                runtime.node,
+                command,
+                cwd,
+                timeout_ms,
+                None,
+                runtime.env,
+            )?
+        }
+        Request::DevecoHdc { lease, args, cwd } => {
+            let lease = b.lease(&lease)?;
+            ensure!(
+                lease.job.is_some(),
+                "DevEco HDC requires a managed signing job"
+            );
+            let command = crate::deveco::device_command(&args, &lease.device)?;
+            if let Some(args) = command {
+                ensure!(
+                    !b.state
+                        .runs
+                        .values()
+                        .any(|r| r.lease == lease.token && r.kind == "exec" && !r.handled),
+                    "one foreground command per lease"
+                );
+                let mut command = vec!["-t".into(), lease.device.clone()];
+                command.extend(args);
+                let hdc = b.hdc.clone();
+                b.start(
+                    lease,
+                    "exec",
+                    hdc,
+                    command,
+                    cwd,
+                    idle_ms(),
+                    None,
+                    BTreeMap::new(),
+                )?
+            } else {
+                json!({"targets": format!("{}\n", lease.device)})
+            }
         }
         Request::Logs { lease, output } => {
             let lease = b.lease(&lease)?;
@@ -394,6 +477,7 @@ fn handle(shared: &Shared, request: Request) -> Result<Value> {
                 cwd,
                 u64::MAX - now() - 1,
                 Some(output),
+                BTreeMap::new(),
             )?
         }
         Request::Job {
@@ -434,6 +518,7 @@ fn handle(shared: &Shared, request: Request) -> Result<Value> {
                 cwd,
                 timeout_ms,
                 None,
+                BTreeMap::new(),
             )?
         }
         Request::RunStatus { run } => {

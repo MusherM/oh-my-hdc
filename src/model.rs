@@ -139,6 +139,18 @@ pub struct Envelope {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
+    Deveco {
+        lease: String,
+        runtime: crate::deveco::Runtime,
+        args: Vec<String>,
+        cwd: PathBuf,
+        timeout_ms: u64,
+    },
+    DevecoHdc {
+        lease: String,
+        args: Vec<String>,
+        cwd: PathBuf,
+    },
     Ping,
     Status,
     Acquire {

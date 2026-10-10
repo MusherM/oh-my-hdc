@@ -61,6 +61,13 @@ pub fn blocked(command: &str) -> bool {
             if matches!(base.as_str(), "hdc" | "hdc.exe") {
                 return true;
             }
+            if matches!(
+                base.as_str(),
+                "devecocli" | "devecocli.cmd" | "devecocli.exe"
+            ) && deveco_device_command(&tokens[i + 1..])
+            {
+                return true;
+            }
             shell = matches!(
                 base.as_str(),
                 "sh" | "bash"
@@ -80,6 +87,12 @@ pub fn blocked(command: &str) -> bool {
         {
             return blocked(&tokens[i + 1..].join(" "));
         }
+        if token.replace('\\', "/").contains("deveco-cli/")
+            && base == "cli.js"
+            && deveco_device_command(&tokens[i + 1..])
+        {
+            return true;
+        }
         // Catch command substitutions even when embedded in quoted arguments.
         if let Some((_, tail)) = token.split_once("$(")
             && blocked(tail.trim_end_matches(')'))
@@ -93,6 +106,21 @@ pub fn blocked(command: &str) -> bool {
         }
     }
     false
+}
+
+fn deveco_device_command(args: &[String]) -> bool {
+    let args: Vec<_> = args
+        .iter()
+        .take_while(|s| *s != ";")
+        .map(String::as_str)
+        .collect();
+    !args.iter().any(|s| matches!(*s, "--help" | "-h"))
+        && args.first().is_some_and(|s| {
+            matches!(
+                *s,
+                "signature" | "run" | "device" | "ui" | "log" | "emulator" | "serve"
+            )
+        })
 }
 
 pub fn hook() -> Result<()> {
@@ -109,7 +137,7 @@ pub fn hook() -> Result<()> {
     if blocked(command) {
         println!(
             "{}",
-            json!({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Use omh acquire / omh exec / omh logs. Direct hdc bypasses shared-device scheduling."}})
+            json!({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Use omh acquire / omh exec / omh logs, or omh deveco signature generate. Direct HDC and DevEco device operations bypass shared-device scheduling."}})
         );
     } else {
         println!("{{}}");
@@ -237,6 +265,9 @@ mod tests {
             "cd /tmp && env X=1 hdc list targets",
             "bash -lc 'hdc shell ls'",
             "echo $(hdc list targets)",
+            "devecocli signature generate",
+            "devecocli run --device other",
+            "node /tools/@deveco/deveco-cli/dist/cli.js signature generate",
         ] {
             assert!(blocked(command), "{command}");
         }
@@ -245,6 +276,9 @@ mod tests {
             "echo hdc",
             "cat README.md",
             "omh --version",
+            "omh deveco signature generate --lease TOKEN",
+            "devecocli signature generate --help",
+            "devecocli docs search signature",
         ] {
             assert!(!blocked(command), "{command}");
         }

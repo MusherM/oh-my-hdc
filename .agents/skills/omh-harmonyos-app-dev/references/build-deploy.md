@@ -6,6 +6,37 @@
 
 本机构建工具优先级：项目现有脚本 > 项目 wrapper > 已安装 DevEco 工具。复用脚本前核对其设备操作全部经过 omh。macOS 常见根目录 `/Applications/DevEco-Studio.app/Contents`，它是候选位置，不是跨机器保证。Windows 从实际 DevEco 安装目录找 node.exe、JBR、SDK 和 hdc.exe；PowerShell 设置 `$env:JAVA_HOME`、`$env:DEVECO_SDK_HOME`、`$env:Path`，用 `&` 调用带空格路径。Linux 使用实际可用的 SDK/wrapper，不假设存在 macOS App bundle。
 
+## 缺少签名时自动补齐
+
+构建前用 JSON5 解析项目配置，按当前 product 的 `signingConfig` 查找
+`app.signingConfigs` 中对应材料，核对 `certpath`、`profile`、`storeFile` 引用可读且非空。
+没有签名配置、引用缺失或材料文件不存在时，尝试 DevEco CLI 自动签名；已有有效材料
+则复用，不无条件重签。不要输出 `keyPassword` / `storePassword` 或整个材料对象。
+已存在但过期、损坏、团队不匹配等问题先诊断，不擅自用 `--force` 覆盖。
+
+1. 检查 `omh deveco auth status`。官方未登录时也可能退出 0，必须检查文字状态。
+   工具缺失、版本不支持、网络失败分别报告，不能当作未登录而反复重试。
+2. 未登录就立即执行 `omh deveco auth login`。在 Codex 中读取
+   `omh.deveco.login` 事件，直接调用 `open_in_codex` 的 browser target 在当前聊天侧栏
+   打开原始 URL；也可使用可用的 Codex 内置浏览器工具。不要只给用户一个链接，
+   不用系统默认浏览器代替侧栏。没有自动检测标记时明确传 `--browser codex`。
+   非 Codex 环境使用 `--browser default`，由 CLI 打开系统默认浏览器。
+   保持登录进程运行，让用户完成认证；只有收到登录成功回调才继续。超时后按明确
+   错误重新发起一次登录，不能重复打开已失效链接或自动代填账号密码。
+3. 登录后用 `omh devices --json` 选目标设备，以实际 bundleName 申请短租约。
+   在应用根目录执行
+   `omh deveco signature generate --lease TOKEN --product PRODUCT --timeout 10m`。
+   这是托管签名任务，不嵌套 `omh job`；默认复用材料，不传 `--force`。
+4. 核对退出码、`Signature generation completed successfully.`、当前 product 的
+   配置引用、材料非空及目标 UDID 在 Profile 授权范围中；CLI 内部设备查询失败即使
+   被其捕获，也不能当作成功。签名任务会自动清理释放，确认设备状态后再本机构建。
+   安装时重新申请目标设备，不能复用已释放的签名租约。
+
+官方 CLI 仍负责账号、证书与云端 Profile；Profile 可以保留账号已注册的其他设备。
+本机设备查询只经过租约设备。当前适配官方 CLI 1.2.1，拒绝未经验证的版本；
+不自动更新全局 CLI、不修改第三方安装包，不以原生 HDC 回退。完整入口和租约规则
+见 [omh](../../omh/SKILL.md)。
+
 ## 可改参数的 macOS/Bash 模板
 
 在一个 Bash 会话设置变量；用已核对的实际值替换占位符，未替换前不要执行后续代码。

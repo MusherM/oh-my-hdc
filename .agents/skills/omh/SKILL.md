@@ -17,7 +17,9 @@ instructions. Do not report protection as active without an actual denied tool
 call in this Codex session. Missing/untrusted hooks require setup, not a raw-hdc
 fallback.
 
-Build before acquiring a device. Use `omh devices --json`, then:
+Build before acquiring a deployment device. Automatic signing is the exception:
+it needs a short device lease to read UDID before the first signed build (see below).
+Use `omh devices --json`, then:
 
 ```sh
 omh acquire --package com.example.app --wait 30m --json
@@ -44,6 +46,40 @@ their own leases unless explicitly coordinating one test. `OMH_LEASE` can replac
 - Release stops declared apps and owned host processes/forwards, but preserves
   installed apps and data. Restore any test-modified settings in the test itself.
 - A released/expired token cannot be reused. Reacquire instead of retrying it.
+
+## DevEco automatic signing
+
+Use `omh deveco auth status` before acquiring a signing lease. A zero exit code
+does not mean logged in: check for `Current user:` versus `Not logged in`.
+If login is needed, run `omh deveco auth login` and keep that process alive.
+In Codex, it emits an `omh.deveco.login` JSON event: immediately open its exact
+`url` using `open_in_codex` with a browser target in the current chat's side panel
+(or the available in-app browser tool). Do not merely print the link or use the
+OS browser in Codex. Outside Codex, the default browser opens automatically.
+`--browser codex|default` overrides detection for hosts without Codex environment
+markers. Wait for the official login-success callback; the page opening is not
+authentication success. Do not capture credentials or commit the login URL.
+
+From the HarmonyOS app root, acquire a lease declaring its real bundleName, then:
+
+```sh
+omh deveco signature generate --lease TOKEN --product default --timeout 10m
+```
+
+This is a managed signing job, not a command to nest inside another job. It
+automatically cleans up and releases the lease on completion/failure/timeout;
+reacquire for installation after building. Its HDC queries can only reach the
+leased device. Never use raw `devecocli signature generate`, including when
+signing material already exists: the CLI still queries connected devices.
+Reuse login/certificates, omit `--force` unless replacement is explicitly needed,
+and preserve cloud account behavior (the profile may include other devices
+already registered with Huawei). For missing-signature detection and artifact
+validation, read the app-dev skill's build-deploy reference.
+
+This adapter requires Node.js and official DevEco CLI 1.2.1. Other versions fail
+before execution until compatibility is verified; do not silently upgrade,
+patch the SDK/CLI, or fall back to unscheduled HDC. `--cli` (dist/cli.js) and
+`--node` can be supplied after `omh deveco` when they are not on PATH.
 
 ## Long tests
 

@@ -27,7 +27,8 @@ omh setup codex --project /absolute/path/to/project
 ```
 
 Windows 使用 `omh.exe` 和 SDK 的 `hdc.exe`，路径与引号遵循 PowerShell 规则。
-macOS/Linux 使用相同子命令。运行时不需要 Python、Node 或管理员权限。
+macOS/Linux 使用相同子命令。基础调度不需要 Python、Node 或管理员权限；
+可选 DevEco 自动签名接入需要 Node.js 与官方 DevEco CLI。
 请将二进制安装到稳定位置：项目 hook 保存它的绝对路径，移动后需重新运行 setup。
 
 setup 从二进制内嵌资源安装三个完整的 skill 目录：
@@ -82,6 +83,46 @@ omh release --lease TOKEN
 设备或服务全局选项不能覆盖已分配目标。`exec` 支持安装、卸载、shell、文件发送与
 接收、bugreport、jpid，以及本会话拥有的 fport/rport 创建。
 hilog 使用 `logs`，全局服务操作使用维护入口。
+
+## DevEco 自动签名
+
+当前适配官方 `@deveco/deveco-cli` **1.2.1**；其他版本在执行前拒绝，需验证兼容性后
+再开放。复用本机 CLI、SDK 和登录状态，不修改第三方文件，也不自动更新 CLI。
+`omh deveco --cli /path/to/dist/cli.js --node /path/to/node ...` 可指定非 PATH 安装。
+
+项目开发 skill 会在当前 product 未配置签名或材料文件缺失时尝试以下流程；已有
+材料则复用。登录无需设备租约：
+
+```sh
+omh deveco auth status
+omh deveco auth login
+```
+
+`auth status` 退出 0 不代表已登录，须检查 `Current user:` / `Not logged in`。
+Codex 环境中的登录输出 `omh.deveco.login` 事件，由 agent 立即用 `open_in_codex`
+在聊天侧栏打开其中的 URL，保持登录进程等待用户完成认证。非 Codex 环境直接打开
+系统默认浏览器。可用 `--browser codex|default` 明确选择；普通终端没有内置侧栏工具
+时不要选择 `codex`。页面打开不等于登录成功，须等待官方回调。
+
+在应用根目录、登录成功后申请目标设备并签名：
+
+```sh
+omh acquire --package com.example.app --device DEVICE_ID --wait 30m --json
+omh deveco signature generate --lease TOKEN --product default --timeout 10m
+```
+
+签名需要在首次 signed 构建前短暂读取设备 UDID，是“先构建再申请部署租约”的例外。
+此入口创建托管任务并等待结束和清理，完成、失败、超时后自动释放租约；不嵌套在
+`omh job` 中。启动时打印任务 ID，可用 `omh job status/cancel` 查询或取消。终端退出
+不自动取消托管任务。之后检查材料、构建 signed HAP，并重新申请设备安装。
+
+适配只让官方 CLI 看见租约设备，UDID/设备类型查询经 omh；跨设备、服务维护及
+未知调用会失败，设备查询失败不能被 CLI 吞掉后当作成功。默认不传 `--force`，
+可按需传 `--team-id`。云端证书/Profile 仍由官方管理，Profile 可能包含账号已注册
+的其他设备。签名成功、材料有效、安装成功分别验收。
+
+这不是通用 DevEco 设备代理：`run/ui/log/emulator/serve` 不在适配范围内。
+Codex hook 拒绝常见的直接 DevEco 设备操作；它仍是合作性防护，不是系统沙箱。
 
 ## 长测试与回收
 

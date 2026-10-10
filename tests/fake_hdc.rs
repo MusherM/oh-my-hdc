@@ -70,6 +70,21 @@ fn main() {
     }
     assert_eq!(args[0], "-t");
     let cmd = &args[2..];
+    if cmd == ["shell", "bm", "get", "-u"] {
+        if root.join("invalid-udid").exists() {
+            println!("[Fail] no device UDID");
+            return;
+        }
+        if root.join("query-fails").exists() {
+            process::exit(17);
+        }
+        println!("udid of current device is :\n{}", "A".repeat(64));
+        return;
+    }
+    if cmd == ["shell", "getprop", "hw_sc.build.os.deviceType"] {
+        println!("phone");
+        return;
+    }
     if cmd.len() == 4 && cmd[0..3] == ["shell", "param", "get"] {
         let value = match cmd[3].as_str() {
             "const.product.name" => "Test Phone",
